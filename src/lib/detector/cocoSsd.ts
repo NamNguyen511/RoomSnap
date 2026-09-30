@@ -1,6 +1,6 @@
 import type { ObjectDetection } from "@tensorflow-models/coco-ssd";
 import { toDetections } from "./normalize";
-import type { Detector } from "./types";
+import type { Detector, DetectorBackend } from "./types";
 
 // Weights are self-hosted (public/models) so the service worker can cache
 // them and detection keeps working offline.
@@ -9,6 +9,7 @@ const MIN_CONFIDENCE = 0.5;
 const MAX_BOXES = 40;
 
 let modelPromise: Promise<ObjectDetection> | null = null;
+let backend: DetectorBackend | null = null;
 
 async function loadModel(): Promise<ObjectDetection> {
   // Imported lazily: TensorFlow.js is large and only needed on the scan page.
@@ -17,7 +18,12 @@ async function loadModel(): Promise<ObjectDetection> {
   if (!webgl) await tf.setBackend("cpu");
   await tf.ready();
   const cocoSsd = await import("@tensorflow-models/coco-ssd");
-  return cocoSsd.load({ base: "lite_mobilenet_v2", modelUrl: MODEL_URL });
+  const model = await cocoSsd.load({
+    base: "lite_mobilenet_v2",
+    modelUrl: MODEL_URL,
+  });
+  backend = tf.getBackend() === "webgl" ? "gpu" : "cpu";
+  return model;
 }
 
 function getModel(): Promise<ObjectDetection> {
@@ -32,6 +38,9 @@ function getModel(): Promise<ObjectDetection> {
 
 export const cocoSsdDetector: Detector = {
   name: "coco-ssd/lite_mobilenet_v2",
+  get backend() {
+    return backend;
+  },
   async load() {
     await getModel();
   },

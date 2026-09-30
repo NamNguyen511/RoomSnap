@@ -3,9 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { DETECTORS, detectorById } from "@/lib/detector";
-import type { Detection } from "@/lib/detector/types";
-import { canvasToJpeg, fileToCanvas } from "@/lib/image";
+import type { Detection, DetectorBackend } from "@/lib/detector/types";
+import { canvasToJpeg, fileToCanvas, toDetectionCanvas } from "@/lib/image";
 import { CameraCapture } from "./CameraCapture";
+import { LiveCamera } from "./LiveCamera";
 import { ScanEditor } from "./ScanEditor";
 
 type Capture = {
@@ -26,6 +27,8 @@ export function Scanner({ roomId }: { roomId: string }) {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [capture, setCapture] = useState<Capture | null>(null);
+  const [live, setLive] = useState(false);
+  const [backend, setBackend] = useState<DetectorBackend | null>(null);
   // Null until the saved choice has been read, so the default model isn't
   // downloaded for someone who picked the other one.
   const [detectorId, setDetectorId] = useState<string | null>(null);
@@ -44,7 +47,17 @@ export function Scanner({ roomId }: { roomId: string }) {
 
   // Start downloading the model while the user is still framing the shot.
   useEffect(() => {
-    if (detectorId) detectorById(detectorId).detector.load().catch(() => {});
+    if (!detectorId) return;
+    let current = true;
+    const chosen = detectorById(detectorId).detector;
+    setBackend(chosen.backend);
+    chosen
+      .load()
+      .then(() => current && setBackend(chosen.backend))
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
   }, [detectorId]);
 
   function chooseDetector(id: string) {
@@ -61,7 +74,7 @@ export function Scanner({ roomId }: { roomId: string }) {
     return () => URL.revokeObjectURL(capture.url);
   }, [capture]);
 
-  async function handlePhoto(file: File) {
+  async function handlePhoto(file: Blob) {
     setError(null);
     setStatus("Preparing photo…");
     let canvas: HTMLCanvasElement;
@@ -81,7 +94,7 @@ export function Scanner({ roomId }: { roomId: string }) {
       setStatus("Loading the detection model…");
       await detector.load();
       setStatus("Finding objects…");
-      objects = await detector.detect(canvas);
+      objects = await detector.detect(toDetectionCanvas(canvas));
     } catch {
       detectionFailed = true;
     }
@@ -145,8 +158,38 @@ export function Scanner({ roomId }: { roomId: string }) {
     );
   }
 
+  if (live) {
+    return (
+      <LiveCamera
+        // The same model as the captured photo gets, so the preview shows
+        // what the scan will contain.
+        detector={detector}
+        onCapture={(photo) => {
+          setLive(false);
+          handlePhoto(photo);
+        }}
+        onClose={() => setLive(false)}
+        onUnavailable={(message) => {
+          setLive(false);
+          setError(message);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4">
+      <button
+        type="button"
+        className="btn btn-primary min-h-14 text-base"
+        disabled={status !== null}
+        onClick={() => {
+          setError(null);
+          setLive(true);
+        }}
+      >
+        Open live camera
+      </button>
       <CameraCapture onPhoto={handlePhoto} disabled={status !== null} />
       {status && (
         <p role="status" className="text-center text-muted">
@@ -173,6 +216,13 @@ export function Scanner({ roomId }: { roomId: string }) {
           ))}
         </select>
         <span className="font-normal text-muted">{option.description}</span>
+        {backend && (
+          <span className="font-normal text-muted" data-testid="model-backend">
+            {backend === "gpu"
+              ? "Running on this device's graphics chip."
+              : "Running on this device's processor, which is slower. Live boxes may lag."}
+          </span>
+        )}
       </label>
       <p className="text-center text-sm text-muted">
         Objects are detected on your device. The photo is only uploaded when

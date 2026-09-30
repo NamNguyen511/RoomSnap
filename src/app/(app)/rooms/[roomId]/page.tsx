@@ -133,6 +133,7 @@ export default async function RoomPage({
           <form action={deleteRoom.bind(null, room.id)}>
             <ConfirmButton
               className="btn btn-danger"
+              deletesScanIds={room.scans.map((scan) => scan.id)}
               message={`Delete "${room.name}" and all of its scans? This can't be undone.`}
             >
               Delete room

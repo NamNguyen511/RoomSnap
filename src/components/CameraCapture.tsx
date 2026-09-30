@@ -3,13 +3,13 @@
 import { useRef } from "react";
 
 type Props = {
-  onPhoto: (file: File) => void;
+  onPhoto: (photo: Blob) => void;
   disabled?: boolean;
 };
 
 /**
- * Uses file inputs rather than a live viewfinder: `capture` opens the rear
- * camera on phones with no permission handling, and desktops get a file picker.
+ * The options that need no camera permission: `capture` hands off to the
+ * phone's own camera app, and desktops get a file picker.
  */
 export function CameraCapture({ onPhoto, disabled }: Props) {
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -42,11 +42,11 @@ export function CameraCapture({ onPhoto, disabled }: Props) {
       />
       <button
         type="button"
-        className="btn btn-primary min-h-14 text-base"
+        className="btn"
         disabled={disabled}
         onClick={() => cameraRef.current?.click()}
       >
-        Take a photo
+        Use the phone&apos;s camera app
       </button>
       <button
         type="button"

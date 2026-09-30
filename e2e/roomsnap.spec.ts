@@ -23,6 +23,33 @@ async function register(page: Page, email: string) {
   await expect(page).toHaveURL(/\/rooms$/);
 }
 
+// The app refuses software-emulated WebGPU adapters because they are slower
+// than the processor, and that is the only kind the test browser has. In the
+// "webgpu" project, present it as a real one so the WebGPU code path runs.
+test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.project.name !== "webgpu") return;
+  await page.addInitScript(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gpu = (navigator as any).gpu;
+    if (!gpu) return;
+    const requestAdapter = gpu.requestAdapter.bind(gpu);
+    gpu.requestAdapter = async (...args: unknown[]) => {
+      const adapter = await requestAdapter(...args);
+      if (adapter) {
+        const info = adapter.info ?? {};
+        Object.defineProperty(adapter, "info", {
+          value: new Proxy(info, {
+            get: (target, key) =>
+              key === "isFallbackAdapter" ? false : target[key],
+          }),
+        });
+        Object.defineProperty(adapter, "isFallbackAdapter", { value: false });
+      }
+      return adapter;
+    };
+  });
+});
+
 test("signed-out visitors are sent to the login page", async ({ page }) => {
   await page.goto("/rooms");
   await expect(page).toHaveURL(/\/login/);
@@ -211,6 +238,16 @@ test("detects objects offline once the app has been used online", async ({
   await page.getByRole("button", { name: "Save scan" }).click();
   await expect(page).toHaveURL(/\/scans\/[\w-]+$/);
 
+  // Deleting the scan also removes its photo from the offline cache.
+  const photoUrl = new URL(`/api/scans/${page.url().split("/").pop()}/image`, page.url()).href;
+  const photoIsCached = () =>
+    page.evaluate(async (url) => (await caches.match(url)) !== undefined, photoUrl);
+  await expect.poll(photoIsCached).toBe(true);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete scan" }).click();
+  await expect(page.getByRole("heading", { name: "Bedroom" })).toBeVisible();
+  await expect.poll(photoIsCached).toBe(false);
+
   // Logging out drops this account's cached pages and photos, but keeps the
   // model so the next sign-in doesn't download it again.
   await page.getByRole("button", { name: "Log out" }).click();
@@ -280,4 +317,98 @@ test("the YOLOv8 model finds the furniture and the plants", async ({ page }) => 
   await page.getByRole("button", { name: "Save scan" }).click();
   await expect(page).toHaveURL(/\/scans\/[\w-]+$/);
   await expect(page.getByTestId("object-row")).toHaveCount(detected.length);
+});
+
+test("the app can be installed", async ({ page }) => {
+  await page.goto("/login");
+  await page.evaluate(() => navigator.serviceWorker.ready);
+
+  // Ask Chrome itself whether it would offer to install the app.
+  const cdp = await page.context().newCDPSession(page);
+  const manifest = await cdp.send("Page.getAppManifest");
+  expect(manifest.errors).toEqual([]);
+  expect(manifest.url).toContain("/manifest.webmanifest");
+  const { installabilityErrors } = await cdp.send("Page.getInstallabilityErrors");
+  expect(installabilityErrors).toEqual([]);
+
+  const parsed = JSON.parse(manifest.data ?? "{}");
+  expect(parsed.display).toBe("standalone");
+  for (const icon of parsed.icons) {
+    expect((await page.request.get(icon.src)).status(), icon.src).toBe(200);
+  }
+});
+
+// The preview runs whichever model is selected, so it matches the saved scan.
+for (const model of ["coco-ssd", "yolov8n-coco"]) {
+  test(`live camera shows ${model} boxes while aiming and captures a scan`, async ({ page }, testInfo) => {
+    await register(page, uniqueEmail("live"));
+    await page.getByLabel("Room name").fill("Den");
+    await page.getByRole("button", { name: "Add" }).click();
+    await page.getByRole("link", { name: "New scan" }).click();
+    await page.getByLabel("Detection model").selectOption(model);
+    // The page says where the model runs. Only the "webgpu" project gives the
+    // browser a WebGPU adapter; the standard model uses WebGL either way.
+    const onGpu = model === "coco-ssd" || testInfo.project.name === "webgpu";
+    await expect(page.getByTestId("model-backend")).toContainText(
+      onGpu ? "graphics chip" : "processor",
+      { timeout: 60_000 },
+    );
+
+    let started = Date.now();
+    await page.getByRole("button", { name: "Open live camera" }).click();
+    await expect(page.getByTestId("live-box").first()).toBeVisible({
+      timeout: 90_000,
+    });
+    console.log(`[${model}] first live box after ${Date.now() - started} ms`);
+
+    // The preview keeps detecting: count runs over three seconds.
+    const preview = page.getByTestId("live-preview");
+    const runs = async () => Number(await preview.getAttribute("data-detection-runs"));
+    const before = await runs();
+    await page.waitForTimeout(3000);
+    const perSecond = ((await runs()) - before) / 3;
+    const liveLabels = (await page.getByTestId("live-box").allTextContents()).sort();
+    console.log(`[${model}/${testInfo.project.name}] ${perSecond.toFixed(1)} detections/s, live labels: ${liveLabels.join(", ")}`);
+    // Software-emulated WebGPU in the test browser takes seconds per frame,
+    // so only require that detection keeps going, not a particular speed.
+    await expect.poll(runs, { timeout: 60_000 }).toBeGreaterThan(before);
+    await shot(page, `live-${model}`);
+
+    started = Date.now();
+    await page.getByRole("button", { name: "Capture" }).click();
+    await expect(page.getByTestId("object-box").first()).toBeVisible({
+      timeout: 90_000,
+    });
+    console.log(`[${model}] captured and analysed in ${Date.now() - started} ms`);
+    // The camera is released once the photo is taken.
+    await expect(page.getByTestId("live-preview")).toHaveCount(0);
+
+    // What the preview showed is what the scan contains.
+    const scanLabels = (await page.getByTestId("object-box").allTextContents()).sort();
+    expect(scanLabels).toEqual(liveLabels);
+
+    await page.getByRole("button", { name: "Save scan" }).click();
+    await expect(page).toHaveURL(/\/scans\/[\w-]+$/);
+  });
+}
+
+test("falls back to the other options when the camera is blocked", async ({ page }) => {
+  await page.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = () =>
+      Promise.reject(new DOMException("denied", "NotAllowedError"));
+  });
+  await register(page, uniqueEmail("nocam"));
+  await page.getByLabel("Room name").fill("Attic");
+  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("link", { name: "New scan" }).click();
+
+  await page.getByRole("button", { name: "Open live camera" }).click();
+  await expect(page.getByText("Camera access is blocked.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose an existing photo" })).toBeEnabled();
+
+  // The file route still works.
+  await page.getByTestId("library-input").setInputFiles(PHOTO);
+  await expect(page.getByTestId("object-box").first()).toBeVisible({
+    timeout: 90_000,
+  });
 });

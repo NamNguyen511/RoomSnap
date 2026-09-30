@@ -59,6 +59,7 @@ export default async function SavedScanPage({
       <form action={deleteScan.bind(null, scan.id)}>
         <ConfirmButton
           className="btn btn-danger w-full"
+          deletesScanIds={[scan.id]}
           message="Delete this scan and its photo? This can't be undone."
         >
           Delete scan

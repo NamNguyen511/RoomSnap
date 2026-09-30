@@ -1,7 +1,7 @@
 import { defaultCache } from "@serwist/next/worker";
 import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
 import { CacheFirst, ExpirationPlugin, NetworkOnly, Serwist } from "serwist";
-import { MODEL_CACHE } from "@/lib/caches";
+import { MODEL_CACHE, SCAN_PHOTO_CACHE } from "@/lib/caches";
 
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
@@ -29,7 +29,7 @@ const serwist = new Serwist({
       matcher: ({ sameOrigin, url }) =>
         sameOrigin && /^\/api\/scans\/[^/]+\/image$/.test(url.pathname),
       handler: new CacheFirst({
-        cacheName: "scan-photos",
+        cacheName: SCAN_PHOTO_CACHE,
         plugins: [new ExpirationPlugin({ maxEntries: 60 })],
       }),
     },

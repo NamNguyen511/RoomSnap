@@ -36,11 +36,22 @@ in a production build: `npm run build && npm start`.
   `public/models/` and cached by the service worker after first use, so
   detection keeps working offline. The photo is only uploaded when a scan is
   saved.
+- **Live camera** (`src/components/LiveCamera.tsx`): the preview draws boxes
+  from the selected model while you aim, and Capture analyses the still with
+  that same model at the same size, so the preview shows what the scan will
+  contain. On Android
+  Chrome the still is a full-resolution photo; on iPhone it is a video frame,
+  so the phone's camera app (the second button) gives better quality in dim
+  rooms. Browsers offer no HDR or night mode on a video stream.
 - **The model knows 80 categories** (chair, couch, bed, dining table, tv,
   laptop, potted plant, book, clock, vase, refrigerator…). It does not find
   lamps, shelves, desks, rugs or curtains, and only reports objects it is at
   least 50% sure of. Anything it misses can be added by drawing a box, and any
   result can be renamed or removed.
+- **Where models run**: the standard model uses the graphics chip through
+  WebGL. The YOLOv8 models use it through WebGPU where the browser has it,
+  and fall back to the processor (slower, so live boxes lag) where it
+  doesn't. The scan page says which one is in use.
 - **Two more models** can be picked on the scan page, both run with ONNX
   Runtime Web (`src/lib/detector/yolo.ts`) and only downloaded if selected:
   - *YOLOv8*: YOLOv8n trained on COCO, the same 80 categories. On the test
@@ -73,7 +84,6 @@ in a production build: `npm run build && npm start`.
 
 ## Not in this version
 
-- Live camera viewfinder (the app uses the phone's own camera screen).
 - Saving scans while offline: detection works offline, saving waits for a
   connection.
 - Production hosting. SQLite and local-disk photos suit a single server; a

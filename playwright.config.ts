@@ -1,6 +1,21 @@
+import { copyFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 3100;
+
+// Chromium's fake camera plays an MJPEG file; a single JPEG is a valid one,
+// so the live-camera test "sees" the fixture living room.
+const fakeCameraDir = path.resolve("node_modules/.cache/roomsnap");
+const fakeCameraVideo = path.join(fakeCameraDir, "living-room.mjpeg");
+mkdirSync(fakeCameraDir, { recursive: true });
+copyFileSync(path.resolve("e2e/fixtures/living-room.jpg"), fakeCameraVideo);
+
+const cameraArgs = [
+  "--use-fake-ui-for-media-stream", // grant the camera without a prompt
+  "--use-fake-device-for-media-stream",
+  `--use-file-for-fake-video-capture=${fakeCameraVideo}`,
+];
 
 // Runs against a production build with its own throwaway database and
 // upload folder, so tests never touch development data.
@@ -15,6 +30,32 @@ export default defineConfig({
     ...devices["Pixel 7"],
     trace: "retain-on-failure",
   },
+  projects: [
+    {
+      // The headless browser has no WebGPU here, so this covers the
+      // processor path that phones without WebGPU take.
+      name: "default",
+      use: { launchOptions: { args: cameraArgs } },
+    },
+    {
+      // Same YOLOv8 tests again with a (software) WebGPU adapter, to cover
+      // the graphics-chip path.
+      name: "webgpu",
+      grep: /yolov8/i,
+      use: {
+        launchOptions: {
+          args: [
+            ...cameraArgs,
+            "--enable-unsafe-webgpu",
+            "--enable-features=Vulkan",
+            "--use-angle=swiftshader",
+            "--use-webgpu-adapter=swiftshader",
+            "--enable-unsafe-swiftshader",
+          ],
+        },
+      },
+    },
+  ],
   webServer: {
     command: `rm -rf data/e2e && npx prisma migrate deploy && npm run build && npm run start -- -p ${PORT}`,
     url: `http://localhost:${PORT}/login`,
