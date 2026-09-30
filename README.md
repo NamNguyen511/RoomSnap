@@ -43,6 +43,16 @@ in a production build: `npm run build && npm start`.
   Chrome the still is a full-resolution photo; on iPhone it is a video frame,
   so the phone's camera app (the second button) gives better quality in dim
   rooms. Browsers offer no HDR or night mode on a video stream.
+- **Saving offline** (`src/lib/pendingScans.ts`,
+  `src/components/PendingScans.tsx`): if the server can't be reached, the scan
+  is stored on the device (IndexedDB) and uploaded when the connection
+  returns, the app is reopened, or "Upload now" is pressed. Each scan carries
+  an id chosen on the device, so a retried upload is never stored twice. A
+  scan the server refuses (for example, its room was deleted) stays in the
+  list with the reason until it is retried or discarded. Unsent scans exist
+  only on that device: clearing the browser's data loses them, and logging
+  out deletes them after a warning. iPhones don't upload in the background,
+  so there the upload happens the next time the app is opened.
 - **The model knows 80 categories** (chair, couch, bed, dining table, tv,
   laptop, potted plant, book, clock, vase, refrigerator…). It does not find
   lamps, shelves, desks, rugs or curtains, and only reports objects it is at
@@ -84,8 +94,6 @@ in a production build: `npm run build && npm start`.
 
 ## Not in this version
 
-- Saving scans while offline: detection works offline, saving waits for a
-  connection.
 - Production hosting. SQLite and local-disk photos suit a single server; a
   hosted deployment would move to Postgres and object storage.
 - Login rate limiting and password reset.

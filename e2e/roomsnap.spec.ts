@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
@@ -13,6 +14,14 @@ const uniqueEmail = (name: string) => `${name}-${Date.now()}@example.com`;
 async function shot(page: Page, name: string) {
   const dir = process.env.E2E_SHOTS;
   if (dir) await page.screenshot({ path: path.join(dir, `${name}.png`), fullPage: true });
+}
+
+async function login(page: Page, email: string) {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(page).toHaveURL(/\/rooms$/);
 }
 
 async function register(page: Page, email: string) {
@@ -229,14 +238,34 @@ test("detects objects offline once the app has been used online", async ({
   });
   await expect(page.getByText("Automatic detection isn't available")).toHaveCount(0);
 
-  // Saving needs the server, and says so.
+  // With no connection the scan is kept on the device, and scanning can go on.
+  const pending = page.getByTestId("pending-scans");
   await page.getByRole("button", { name: "Save scan" }).click();
-  await expect(page.getByText("You're offline. Reconnect to save this scan.")).toBeVisible();
+  await expect(page.getByText("Saved on this device. It will upload")).toBeVisible();
+  await expect(pending).toContainText("1 scan waiting to upload");
+  await expect(pending).toContainText("when you're back online");
 
-  // Back online, the same scan saves without retaking the photo.
-  await context.setOffline(false);
+  await page.getByTestId("library-input").setInputFiles(PHOTO);
+  await expect(page.getByTestId("object-box").first()).toBeVisible({
+    timeout: 90_000,
+  });
   await page.getByRole("button", { name: "Save scan" }).click();
+  await expect(pending).toContainText("2 scans waiting to upload");
+  await shot(page, "pending-offline");
+
+  // The queue survives closing and reopening the app.
+  await page.reload();
+  await expect(pending).toContainText("2 scans waiting to upload");
+
+  // Back online they upload by themselves and appear in the room.
+  await context.setOffline(false);
+  await expect(pending).toHaveCount(0, { timeout: 30_000 });
+  await page.goto(scanPage.replace(/\/scan$/, ""));
+  const savedScans = page.locator('a[href^="/scans/"]');
+  await expect(savedScans).toHaveCount(2);
+  await savedScans.first().click();
   await expect(page).toHaveURL(/\/scans\/[\w-]+$/);
+  await expect(page.getByTestId("object-box").first()).toBeVisible();
 
   // Deleting the scan also removes its photo from the offline cache.
   const photoUrl = new URL(`/api/scans/${page.url().split("/").pop()}/image`, page.url()).href;
@@ -411,4 +440,112 @@ test("falls back to the other options when the camera is blocked", async ({ page
   await expect(page.getByTestId("object-box").first()).toBeVisible({
     timeout: 90_000,
   });
+});
+
+test("uploading the same scan twice stores it once", async ({ page, browser }) => {
+  await register(page, uniqueEmail("retry"));
+  await page.getByLabel("Room name").fill("Hall");
+  await page.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByRole("heading", { name: "Hall" })).toBeVisible();
+  const roomId = page.url().split("/").pop()!;
+
+  const id = "3f2b8c1e-5a47-4d09-9c3e-7b1a2d4e6f80";
+  const upload = (request: Page["request"], room: string) =>
+    request.post("/api/scans", {
+      multipart: {
+        id,
+        roomId: room,
+        width: "1280",
+        height: "854",
+        modelName: "test",
+        objects: "[]",
+        image: { name: "photo.jpg", mimeType: "image/jpeg", buffer: readFileSync(PHOTO) },
+      },
+    });
+
+  const first = await upload(page.request, roomId);
+  expect(first.status()).toBe(201);
+  // The reply was "lost" and the app retries: same answer, no second scan.
+  const second = await upload(page.request, roomId);
+  expect(second.status()).toBe(200);
+  expect((await second.json()).id).toBe(id);
+  await page.reload();
+  await expect(page.locator('a[href^="/scans/"]')).toHaveCount(1);
+
+  // Someone else can't claim or overwrite that scan by reusing its id.
+  const otherContext = await browser.newContext();
+  const other = await otherContext.newPage();
+  await register(other, uniqueEmail("retry-other"));
+  await other.getByLabel("Room name").fill("Shed");
+  await other.getByRole("button", { name: "Add" }).click();
+  await expect(other.getByRole("heading", { name: "Shed" })).toBeVisible();
+  const theirs = await upload(other.request, other.url().split("/").pop()!);
+  expect(theirs.status()).toBe(409);
+  await otherContext.close();
+});
+
+test("a queued scan the server refuses can be discarded, and logging out clears the queue", async ({
+  page,
+  context,
+  browser,
+}) => {
+  const email = uniqueEmail("queue");
+  await register(page, email);
+  await page.getByLabel("Room name").fill("Garage");
+  await page.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByRole("heading", { name: "Garage" })).toBeVisible();
+  const roomUrl = page.url();
+
+  // Queue two scans offline.
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.goto(`${roomUrl}/scan`);
+  await page.getByTestId("library-input").setInputFiles(PHOTO);
+  await expect(page.getByTestId("object-box").first()).toBeVisible({ timeout: 90_000 });
+  await context.setOffline(true);
+  const pending = page.getByTestId("pending-scans");
+  for (const count of ["1 scan", "2 scans"]) {
+    if (count === "2 scans") {
+      await page.getByTestId("library-input").setInputFiles(PHOTO);
+      await expect(page.getByTestId("object-box").first()).toBeVisible({ timeout: 90_000 });
+    }
+    await page.getByRole("button", { name: "Save scan" }).click();
+    await expect(pending).toContainText(`${count} waiting to upload`);
+  }
+
+  // Meanwhile the room is deleted from another device.
+  const otherContext = await browser.newContext();
+  const other = await otherContext.newPage();
+  await login(other, email);
+  await other.goto(roomUrl);
+  await other.getByText("Room settings").click();
+  other.once("dialog", (dialog) => dialog.accept());
+  await other.getByRole("button", { name: "Delete room" }).click();
+  await expect(other).toHaveURL(/\/rooms$/);
+  await otherContext.close();
+
+  // Back online the server refuses them; they stay, with the reason shown.
+  await context.setOffline(false);
+  await expect(pending.getByText("The room this scan belongs to no longer exists")).toHaveCount(2, {
+    timeout: 30_000,
+  });
+  await expect(pending).toContainText("2 scans waiting to upload");
+  await shot(page, "pending-refused");
+
+  // Discard one.
+  page.once("dialog", (dialog) => dialog.accept());
+  await pending.getByRole("button", { name: "Discard" }).first().click();
+  await expect(pending).toContainText("1 scan waiting to upload");
+
+  // Logging out warns about the other, then removes it from the device.
+  let warning = "";
+  page.once("dialog", (dialog) => {
+    warning = dialog.message();
+    dialog.accept();
+  });
+  await page.getByRole("button", { name: "Log out" }).click();
+  await expect(page).toHaveURL(/\/login/);
+  expect(warning).toContain("1 scan hasn't uploaded yet");
+  await login(page, email);
+  await expect(page.getByText("Your rooms")).toBeVisible();
+  await expect(page.getByTestId("pending-scans")).toHaveCount(0);
 });

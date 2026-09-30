@@ -5,11 +5,14 @@ import { useEffect, useState } from "react";
 import { DETECTORS, detectorById } from "@/lib/detector";
 import type { Detection, DetectorBackend } from "@/lib/detector/types";
 import { canvasToJpeg, fileToCanvas, toDetectionCanvas } from "@/lib/image";
+import { addPending, newScanId, postScan } from "@/lib/pendingScans";
 import { CameraCapture } from "./CameraCapture";
 import { LiveCamera } from "./LiveCamera";
 import { ScanEditor } from "./ScanEditor";
 
 type Capture = {
+  /** Fixed per capture, so saving twice can't create two scans. */
+  id: string;
   blob: Blob;
   url: string;
   width: number;
@@ -22,10 +25,13 @@ type Capture = {
 const MODEL_STORAGE_KEY = "roomsnap:detector";
 
 /** Capture a photo, detect objects on the device, review, then save. */
-export function Scanner({ roomId }: { roomId: string }) {
+type Props = { roomId: string; roomName: string; userId: string };
+
+export function Scanner({ roomId, roomName, userId }: Props) {
   const router = useRouter();
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [capture, setCapture] = useState<Capture | null>(null);
   const [live, setLive] = useState(false);
   const [backend, setBackend] = useState<DetectorBackend | null>(null);
@@ -76,6 +82,7 @@ export function Scanner({ roomId }: { roomId: string }) {
 
   async function handlePhoto(file: Blob) {
     setError(null);
+    setNotice(null);
     setStatus("Preparing photo…");
     let canvas: HTMLCanvasElement;
     let blob: Blob;
@@ -100,6 +107,7 @@ export function Scanner({ roomId }: { roomId: string }) {
     }
 
     setCapture({
+      id: newScanId(),
       blob,
       url: URL.createObjectURL(blob),
       width: canvas.width,
@@ -113,25 +121,41 @@ export function Scanner({ roomId }: { roomId: string }) {
 
   async function save(objects: Detection[]): Promise<string | null> {
     if (!capture) return null;
-    const form = new FormData();
-    form.set("roomId", roomId);
-    form.set("width", String(capture.width));
-    form.set("height", String(capture.height));
-    form.set("modelName", capture.modelName);
-    form.set("objects", JSON.stringify(objects));
-    form.set("image", capture.blob, "photo.jpg");
+    const scan = {
+      id: capture.id,
+      roomId,
+      width: capture.width,
+      height: capture.height,
+      modelName: capture.modelName,
+      objects,
+      image: capture.blob,
+    };
 
-    let res: Response;
-    try {
-      res = await fetch("/api/scans", { method: "POST", body: form });
-    } catch {
-      return navigator.onLine
-        ? "Couldn't reach the server. Try again."
-        : "You're offline. Reconnect to save this scan.";
+    const result = await postScan(scan);
+    if (result.kind === "saved") {
+      router.push(`/scans/${result.id}`);
+      return null;
     }
-    const body = await res.json().catch(() => null);
-    if (!res.ok) return body?.error ?? "Couldn't save the scan. Try again.";
-    router.push(`/scans/${body.id}`);
+    if (result.kind === "rejected") return result.message;
+
+    // The server can't be reached: keep the scan on this device and upload
+    // it later (see PendingScans), so scanning can carry on.
+    try {
+      await addPending({
+        ...scan,
+        userId,
+        roomName,
+        createdAt: new Date().toISOString(),
+        error: null,
+      });
+    } catch {
+      // No storage available (e.g. private browsing): nothing to fall back on.
+      return "You're offline and this browser can't store the scan. Reconnect, then save again.";
+    }
+    setCapture(null);
+    setNotice(
+      "Saved on this device. It will upload automatically when you're back online.",
+    );
     return null;
   }
 
@@ -185,12 +209,18 @@ export function Scanner({ roomId }: { roomId: string }) {
         disabled={status !== null}
         onClick={() => {
           setError(null);
+          setNotice(null);
           setLive(true);
         }}
       >
         Open live camera
       </button>
       <CameraCapture onPhoto={handlePhoto} disabled={status !== null} />
+      {notice && (
+        <p role="status" className="card p-3 text-center text-sm">
+          {notice}
+        </p>
+      )}
       {status && (
         <p role="status" className="text-center text-muted">
           {status}

@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { LogoutButton } from "@/components/LogoutButton";
+import { PendingScans } from "@/components/PendingScans";
 import { requireUserId } from "@/lib/session";
 
 export default async function AppLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  await requireUserId();
+  const userId = await requireUserId();
 
   return (
     <>
@@ -17,10 +18,11 @@ export default async function AppLayout({
           >
             RoomSnap
           </Link>
-          <LogoutButton />
+          <LogoutButton userId={userId} />
         </div>
       </header>
       <main className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-6">
+        <PendingScans userId={userId} />
         {children}
       </main>
     </>

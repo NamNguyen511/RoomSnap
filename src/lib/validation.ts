@@ -40,6 +40,8 @@ export const objectSchema = z
 export const objectsSchema = z.array(objectSchema).max(MAX_OBJECTS_PER_SCAN);
 
 export const scanMetaSchema = z.object({
+  // Sent by the app so a retried upload is recognised instead of duplicated.
+  id: z.uuid().optional(),
   roomId: z.string().min(1).max(64),
   width: z.coerce.number().int().min(1).max(10000),
   height: z.coerce.number().int().min(1).max(10000),

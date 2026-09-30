@@ -26,7 +26,7 @@ export default async function ScanPage({
         ← {room.name}
       </Link>
       <h1 className="text-2xl font-semibold">New scan</h1>
-      <Scanner roomId={room.id} />
+      <Scanner roomId={room.id} roomName={room.name} userId={userId} />
     </>
   );
 }
