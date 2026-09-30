@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  rooms        Room[]
+}
+
+model Room {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime @default(now())
+  scans     Scan[]
+
+  @@index([userId])
+}
+
+model Scan {
+  id        String           @id @default(cuid())
+  roomId    String
+  room      Room             @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  // Path relative to the upload directory: "<userId>/<scanId>.<ext>"
+  imagePath String
+  width     Int
+  height    Int
+  modelName String
+  createdAt DateTime         @default(now())
+  objects   DetectedObject[]
+
+  @@index([roomId])
+}
+
+model DetectedObject {
+  id         String @id @default(cuid())
+  scanId     String
+  scan       Scan   @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  label      String
+  // Null for objects the user added or relabelled by hand.
+  confidence Float?
+  // Box as fractions (0-1) of the image width/height, so it survives any display size.
+  x          Float
+  y          Float
+  w          Float
+  h          Float
+  // "ai" | "manual" (SQLite has no enum type)
+  source     String
+
+  @@index([scanId])
+}
