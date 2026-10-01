@@ -38,10 +38,11 @@ export default defineConfig({
       use: { launchOptions: { args: cameraArgs } },
     },
     {
-      // Same YOLOv8 tests again with a (software) WebGPU adapter, to cover
-      // the graphics-chip path.
+      // The detection test again with a (software) WebGPU adapter, to cover
+      // the graphics-chip path. Emulated WebGPU takes about a minute per
+      // image, too slow for the live-camera test.
       name: "webgpu",
-      grep: /yolov8/i,
+      grep: /YOLO-World model finds room objects/,
       use: {
         launchOptions: {
           args: [

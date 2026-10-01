@@ -31,14 +31,20 @@ in a production build: `npm run build && npm start`.
 
 ## How it works
 
-- **Detection** uses TensorFlow.js with the COCO-SSD model
-  (`src/lib/detector/cocoSsd.ts`). The weights are served from
+- **Detection** uses YOLO-World v2 (small), run in the browser with ONNX
+  Runtime Web (`src/lib/detector/yolo.ts`). YOLO-World finds objects
+  described by words; RoomSnap's 66-word list (room furniture such as lamp,
+  desk, shelf, rug, curtain, pillow and picture frame, plus household objects
+  such as chair, couch, tv, laptop and potted plant) is built into the model
+  by `scripts/export-yolo-world.py`. Edit the list there and re-run it to
+  change what the app looks for; nothing is trained. Objects it is at least
+  25% sure of are reported. The weights (about 50 MB) are served from
   `public/models/` and cached by the service worker after first use, so
   detection keeps working offline. The photo is only uploaded when a scan is
   saved.
 - **Live camera** (`src/components/LiveCamera.tsx`): the preview draws boxes
-  from the selected model while you aim, and Capture analyses the still with
-  that same model at the same size, so the preview shows what the scan will
+  while you aim, and Capture analyses the still with the same model at the
+  same size, so the preview shows what the scan will
   contain. On Android
   Chrome the still is a full-resolution photo; on iPhone it is a video frame,
   so the phone's camera app (the second button) gives better quality in dim
@@ -53,28 +59,15 @@ in a production build: `npm run build && npm start`.
   only on that device: clearing the browser's data loses them, and logging
   out deletes them after a warning. iPhones don't upload in the background,
   so there the upload happens the next time the app is opened.
-- **The model knows 80 categories** (chair, couch, bed, dining table, tv,
-  laptop, potted plant, book, clock, vase, refrigerator…). It does not find
-  lamps, shelves, desks, rugs or curtains, and only reports objects it is at
-  least 50% sure of. Anything it misses can be added by drawing a box, and any
+- **Anything the model misses** can be added by drawing a box, and any
   result can be renamed or removed.
-- **Where models run**: the standard model uses the graphics chip through
-  WebGL. The YOLOv8 models use it through WebGPU where the browser has it,
-  and fall back to the processor (slower, so live boxes lag) where it
-  doesn't. The scan page says which one is in use.
-- **Two more models** can be picked on the scan page, both run with ONNX
-  Runtime Web (`src/lib/detector/yolo.ts`) and only downloaded if selected:
-  - *YOLOv8*: YOLOv8n trained on COCO, the same 80 categories. On the test
-    photo it finds everything the standard model does plus the three plants,
-    with higher confidence. About 27 MB to download the first time.
-  - *Open Images (experimental)*: YOLOv8n trained on Open Images V7 (about
-    600 categories, including lamps, shelves and curtains). On the test photo
-    it is less accurate than either 80-category model: it reports low
-    confidence throughout, so its threshold is 15%, and it mislabels more.
-- **Adding a model**: implement the `Detector` interface in
-  `src/lib/detector/types.ts` and add it to the list in
-  `src/lib/detector/index.ts`. Any YOLOv8 detection model exported to ONNX
-  works with `createYoloDetector`.
+- **Where detection runs**: on the graphics chip through WebGPU where the
+  browser has it, otherwise on the processor (slower, so live boxes lag). The
+  scan page says which one is in use.
+- **Swapping the model**: implement the `Detector` interface in
+  `src/lib/detector/types.ts` and export it from `src/lib/detector/index.ts`.
+  Any YOLOv8-style detection model exported to ONNX works with
+  `createYoloDetector`.
 - **Storage**: SQLite through Prisma (`prisma/schema.prisma`); photos on disk
   under `data/uploads/<userId>/`, served only to their owner. Both live in
   `data/`, which is not committed.
@@ -100,13 +93,9 @@ in a production build: `npm run build && npm start`.
 
 ## Third-party assets
 
-- COCO-SSD model weights (`public/models/coco-ssd/`): Apache-2.0, from the
-  TensorFlow.js models project.
-- YOLOv8n weights (`public/models/yolov8n-coco/` and
-  `public/models/yolov8n-oiv7/`): AGPL-3.0, from Ultralytics. Distributing the
-  app with these models, or offering it as a service, brings AGPL
-  obligations; delete the folders and their entries in
-  `src/lib/detector/index.ts` to avoid them.
+- YOLO-World weights (`public/models/yolo-world-room/`): AGPL-3.0, from
+  Ultralytics. Distributing the app with this model, or offering it as a
+  service, brings AGPL obligations for the app.
 - ONNX Runtime Web (copied to `public/ort/` on install): MIT.
 - Noto Sans (`public/fonts/`): SIL Open Font License, see `public/fonts/OFL.txt`.
 - Test photo (`e2e/fixtures/`): CC0, see `e2e/fixtures/README.md`.

@@ -28,7 +28,7 @@ function iou(a: RawDetection, b: RawDetection): number {
 
 /**
  * Keeps the most confident box of each overlapping group. Deliberately not
- * per-class: Open Images labels overlap ("table", "coffee table"), and one
+ * per-class: word lists overlap ("table", "desk", "sideboard"), and one
  * object should produce one box.
  */
 export function suppressOverlaps(

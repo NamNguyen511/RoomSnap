@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { DETECTORS, detectorById } from "@/lib/detector";
+import { pruneModelCache } from "@/lib/caches";
+import { detector } from "@/lib/detector";
 import type { Detection, DetectorBackend } from "@/lib/detector/types";
 import { canvasToJpeg, fileToCanvas, toDetectionCanvas } from "@/lib/image";
 import { addPending, newScanId, postScan } from "@/lib/pendingScans";
@@ -22,8 +23,6 @@ type Capture = {
   modelName: string;
 };
 
-const MODEL_STORAGE_KEY = "roomsnap:detector";
-
 /** Capture a photo, detect objects on the device, review, then save. */
 type Props = { roomId: string; roomName: string; userId: string };
 
@@ -34,46 +33,23 @@ export function Scanner({ roomId, roomName, userId }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [capture, setCapture] = useState<Capture | null>(null);
   const [live, setLive] = useState(false);
-  const [backend, setBackend] = useState<DetectorBackend | null>(null);
-  // Null until the saved choice has been read, so the default model isn't
-  // downloaded for someone who picked the other one.
-  const [detectorId, setDetectorId] = useState<string | null>(null);
-  const option = detectorById(detectorId);
-  const detector = option.detector;
-
-  useEffect(() => {
-    let stored: string | null = null;
-    try {
-      stored = localStorage.getItem(MODEL_STORAGE_KEY);
-    } catch {
-      // Storage can be blocked (private mode); fall back to the default.
-    }
-    setDetectorId(detectorById(stored).id);
-  }, []);
+  const [backend, setBackend] = useState<DetectorBackend | null>(
+    detector.backend,
+  );
 
   // Start downloading the model while the user is still framing the shot.
   useEffect(() => {
-    if (!detectorId) return;
     let current = true;
-    const chosen = detectorById(detectorId).detector;
-    setBackend(chosen.backend);
-    chosen
+    detector
       .load()
-      .then(() => current && setBackend(chosen.backend))
+      .then(() => current && setBackend(detector.backend))
       .catch(() => {});
+    // Earlier versions offered other models; free the space they took.
+    pruneModelCache("/models/yolo-world-room/").catch(() => {});
     return () => {
       current = false;
     };
-  }, [detectorId]);
-
-  function chooseDetector(id: string) {
-    setDetectorId(id);
-    try {
-      localStorage.setItem(MODEL_STORAGE_KEY, id);
-    } catch {
-      // Not remembered, but still used for this visit.
-    }
-  }
+  }, []);
 
   useEffect(() => {
     if (!capture) return;
@@ -231,32 +207,16 @@ export function Scanner({ roomId, roomName, userId }: Props) {
           {error}
         </p>
       )}
-      <label className="card flex flex-col gap-1.5 p-3 text-sm font-medium">
-        Detection model
-        <select
-          className="input"
-          value={option.id}
-          disabled={detectorId === null || status !== null}
-          onChange={(e) => chooseDetector(e.target.value)}
-        >
-          {DETECTORS.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.title}
-            </option>
-          ))}
-        </select>
-        <span className="font-normal text-muted">{option.description}</span>
-        {backend && (
-          <span className="font-normal text-muted" data-testid="model-backend">
-            {backend === "gpu"
-              ? "Running on this device's graphics chip."
-              : "Running on this device's processor, which is slower. Live boxes may lag."}
-          </span>
-        )}
-      </label>
       <p className="text-center text-sm text-muted">
         Objects are detected on your device. The photo is only uploaded when
         you save the scan.
+        {backend && (
+          <span className="block" data-testid="model-backend">
+            {backend === "gpu"
+              ? "Detection runs on this device's graphics chip."
+              : "Detection runs on this device's processor, which is slower. Live boxes may lag."}
+          </span>
+        )}
       </p>
     </div>
   );

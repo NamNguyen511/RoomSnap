@@ -19,6 +19,21 @@ export async function clearPrivateCaches(): Promise<void> {
   );
 }
 
+/**
+ * Deletes cached files of models the app no longer uses, which would
+ * otherwise take up space on the device indefinitely.
+ */
+export async function pruneModelCache(keepPrefix: string): Promise<void> {
+  if (typeof caches === "undefined") return;
+  const cache = await caches.open(MODEL_CACHE);
+  for (const request of await cache.keys()) {
+    const { pathname } = new URL(request.url);
+    if (pathname.startsWith("/models/") && !pathname.startsWith(keepPrefix)) {
+      await cache.delete(request);
+    }
+  }
+}
+
 /** Removes deleted scans' photos from the offline cache on this device. */
 export async function forgetScanPhotos(scanIds: string[]): Promise<void> {
   if (typeof caches === "undefined" || scanIds.length === 0) return;

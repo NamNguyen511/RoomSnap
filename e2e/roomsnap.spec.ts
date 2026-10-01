@@ -99,11 +99,11 @@ test("scan a room, edit, save, export, and keep it private", async ({
   await page.mouse.down();
   await page.mouse.move(overlay.x + overlay.width * 0.58, overlay.y + overlay.height * 0.76, { steps: 5 });
   await page.mouse.up();
-  await page.getByLabel("Name of the new object").fill("lamp");
+  await page.getByLabel("Name of the new object").fill("coat rack");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByTestId("object-row")).toHaveCount(aiCount + 1);
   await expect(
-    page.getByTestId("object-row").filter({ hasText: "lamp" }),
+    page.getByTestId("object-row").filter({ hasText: "coat rack" }),
   ).toContainText("added by hand");
   await shot(page, "review");
 
@@ -116,8 +116,8 @@ test("scan a room, edit, save, export, and keep it private", async ({
   await expect(page.getByTestId("object-row")).toHaveCount(aiCount + 1);
   await expect(page.getByTestId("object-box")).toHaveCount(aiCount + 1);
 
-  // Edit the saved scan: remove the lamp again and save.
-  await page.getByTestId("object-row").filter({ hasText: "lamp" }).click();
+  // Edit the saved scan: remove the coat rack again and save.
+  await page.getByTestId("object-row").filter({ hasText: "coat rack" }).click();
   await page.getByRole("button", { name: "Remove" }).click();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("button", { name: "Save changes" })).toBeHidden();
@@ -295,59 +295,6 @@ test("detects objects offline once the app has been used online", async ({
   await expect.poll(privateUrls).toEqual([]);
 });
 
-test("the Open Images model can be chosen and is remembered", async ({ page }) => {
-  await register(page, uniqueEmail("oiv7"));
-  await page.getByLabel("Room name").fill("Study");
-  await page.getByRole("button", { name: "Add" }).click();
-  await page.getByRole("link", { name: "New scan" }).click();
-
-  await page.getByLabel("Detection model").selectOption("yolov8n-oiv7");
-  const started = Date.now();
-  await page.getByTestId("library-input").setInputFiles(PHOTO);
-  await expect(page.getByTestId("object-box").first()).toBeVisible({
-    timeout: 90_000,
-  });
-  await expect(page.getByText("Automatic detection isn't available")).toHaveCount(0);
-  const detected = await page.getByTestId("object-row").allTextContents();
-  console.log(`Open Images detected in ${Date.now() - started} ms:`, detected);
-  // Scene and people labels are filtered out.
-  expect(detected.some((row) => /^(house|person|furniture)\d/.test(row))).toBe(false);
-  await shot(page, "review-oiv7");
-
-  await page.getByRole("button", { name: "Save scan" }).click();
-  await expect(page).toHaveURL(/\/scans\/[\w-]+$/);
-  await expect(page.getByTestId("object-row")).toHaveCount(detected.length);
-
-  // The choice sticks for the next scan.
-  await page.goBack();
-  await page.reload();
-  await expect(page.getByLabel("Detection model")).toHaveValue("yolov8n-oiv7");
-});
-
-test("the YOLOv8 model finds the furniture and the plants", async ({ page }) => {
-  await register(page, uniqueEmail("yolo"));
-  await page.getByLabel("Room name").fill("Lounge");
-  await page.getByRole("button", { name: "Add" }).click();
-  await page.getByRole("link", { name: "New scan" }).click();
-
-  await page.getByLabel("Detection model").selectOption("yolov8n-coco");
-  const started = Date.now();
-  await page.getByTestId("library-input").setInputFiles(PHOTO);
-  await expect(page.getByTestId("object-box").first()).toBeVisible({
-    timeout: 90_000,
-  });
-  const detected = await page.getByTestId("object-row").allTextContents();
-  console.log(`YOLOv8 detected in ${Date.now() - started} ms:`, detected);
-  for (const label of EXPECTED_LABELS) {
-    expect(detected.some((row) => row.startsWith(label)), label).toBe(true);
-  }
-  await shot(page, "review-yolov8n");
-
-  await page.getByRole("button", { name: "Save scan" }).click();
-  await expect(page).toHaveURL(/\/scans\/[\w-]+$/);
-  await expect(page.getByTestId("object-row")).toHaveCount(detected.length);
-});
-
 test("the app can be installed", async ({ page }) => {
   await page.goto("/login");
   await page.evaluate(() => navigator.serviceWorker.ready);
@@ -367,19 +314,18 @@ test("the app can be installed", async ({ page }) => {
   }
 });
 
-// The preview runs whichever model is selected, so it matches the saved scan.
-for (const model of ["coco-ssd", "yolov8n-coco"]) {
-  test(`live camera shows ${model} boxes while aiming and captures a scan`, async ({ page }, testInfo) => {
+// The preview runs the same model as the captured photo, so it matches the scan.
+{
+  const model = "yolo-world";
+  test("live camera shows boxes while aiming and captures a scan", async ({ page }, testInfo) => {
     await register(page, uniqueEmail("live"));
     await page.getByLabel("Room name").fill("Den");
     await page.getByRole("button", { name: "Add" }).click();
     await page.getByRole("link", { name: "New scan" }).click();
-    await page.getByLabel("Detection model").selectOption(model);
-    // The page says where the model runs. Only the "webgpu" project gives the
-    // browser a WebGPU adapter; the standard model uses WebGL either way.
-    const onGpu = model === "coco-ssd" || testInfo.project.name === "webgpu";
+    // The page says where the model runs. This project's browser has no
+    // WebGPU, so it runs on the processor.
     await expect(page.getByTestId("model-backend")).toContainText(
-      onGpu ? "graphics chip" : "processor",
+      "processor",
       { timeout: 60_000 },
     );
 
@@ -548,4 +494,28 @@ test("a queued scan the server refuses can be discarded, and logging out clears 
   await login(page, email);
   await expect(page.getByText("Your rooms")).toBeVisible();
   await expect(page.getByTestId("pending-scans")).toHaveCount(0);
+});
+
+test("the YOLO-World model finds room objects such as the lamp", async ({ page }) => {
+  await register(page, uniqueEmail("world"));
+  await page.getByLabel("Room name").fill("Living");
+  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("link", { name: "New scan" }).click();
+
+  const started = Date.now();
+  await page.getByTestId("library-input").setInputFiles(PHOTO);
+  await expect(page.getByTestId("object-box").first()).toBeVisible({
+    timeout: 120_000,
+  });
+  const detected = await page.getByTestId("object-row").allTextContents();
+  console.log(`YOLO-World detected in ${Date.now() - started} ms:`, detected);
+  // The lamp is what the earlier 80-category models missed in this photo.
+  for (const label of ["lamp", ...EXPECTED_LABELS]) {
+    expect(detected.some((row) => row.startsWith(label)), label).toBe(true);
+  }
+  await shot(page, "review-yolo-world");
+
+  await page.getByRole("button", { name: "Save scan" }).click();
+  await expect(page).toHaveURL(/\/scans\/[\w-]+$/);
+  await expect(page.getByTestId("object-row")).toHaveCount(detected.length);
 });
